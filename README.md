@@ -54,14 +54,9 @@ Conclusion: The Decision Tree model outperformed all other models, achieving the
 This project was implemented in R.
 
 Clone the repository:
-
-bash
 git clone https://github.com/Kasra-Shah/Airline-Passenger-Satisfaction-Prediction.git
 Open the R Project file in RStudio.
-
 Install required packages: Ensure the following R packages are installed:
-
-r
 install.packages(c("tidyverse", "caret", "rpart", "MASS", "class", "e1071"))
 Run the R script (classification.R) to reproduce the data cleaning, analysis, and modeling process.
 
