@@ -1,0 +1,295 @@
+---
+title: "classification_markdown"
+author: "kasra shahriari"
+date: "`r Sys.Date()`"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r}
+# general 
+library(dplyr)
+library(MASS) 
+library(ggplot2)
+library(caret) 
+library(tidyverse) 
+library(knitr) 
+library(kableExtra) 
+library(rpart)
+library(rpart.plot)
+library(caret)
+# specific 
+library(e1071) 
+library(nnet) 
+library(pROC) 
+library(ellipse)
+library(klaR)
+library(psych)
+library(pROC)
+```
+
+Importing and spliting data:
+
+```{r}
+#importing data:
+airline_train = read.csv("C:\\Users\\Salar_System\\Desktop\\airlinr passenger satisfaction\\train.csv",header = TRUE,stringsAsFactors=TRUE)
+airline_train = airline_train[,-c(1,2)]
+airline_train = na.omit(airline_train)
+airline_test = read.csv("C:\\Users\\Salar_System\\Desktop\\airlinr passenger satisfaction\\test.csv",header = TRUE,stringsAsFactors=TRUE)
+airline_test = airline_test[,-c(1,2)]
+airline_test = na.omit(airline_test)
+#splitting data:
+set.seed(42)
+est_index = sample(nrow(airline_train), size = 0.8*nrow(airline_train))
+airline_est = airline_train[est_index,]
+airline_valid = airline_train[-est_index,]
+```
+
+Misclassification calculation:
+
+```{r}
+#missclass calculation function:
+calc_misclass = function(actual, predicted) {
+  mean(actual != predicted)
+}
+```
+
+Logistic Regression:
+
+```{r}
+#fitting a logistic regression model:
+airline_glm_model = glm(satisfaction ~ . , data = airline_est, family = binomial)
+
+cutoff_list = seq(0.01,0.99,by=0.01)
+predict_list = list()
+for (i in 1:length(cutoff_list)) {
+  predict_list[i]=list(ifelse(predict(airline_glm_model,airline_valid,type = "response")>cutoff_list[i],"satisfied","neutral or dissatisfied"))
+}
+
+glm_misclass_list = sapply(predict_list, calc_misclass, airline_valid$satisfaction)
+glm_miclass_df = data.frame(misclass = glm_misclass_list, cutoff = cutoff_list)
+view(glm_miclass_df)
+glm_miclass_df %>%
+  ggplot(aes(x = cutoff))+
+  geom_line(aes(y = misclass))
+glm_miclass_df[which(glm_miclass_df[,1]==min(glm_miclass_df[,1]),arr.ind = TRUE),]
+#calculating accuracy:
+accuracy_list = list()
+for (i in 1:length(cutoff_list)) {
+  accuracy_list[i] = mean(predict_list[[i]]==airline_valid$satisfaction)
+}
+#creating confusion matrixes:
+confusion_matrix_list = list()
+for (i in 1:length(cutoff_list)) {
+  confusion_matrix_list[i] = list(table(actual=airline_valid$satisfaction,
+                                        predicted=predict_list[[i]]))
+}
+
+#calculating sensitivity:
+sensitivity_list = list()
+for (i in 1:length(cutoff_list)) {
+  sensitivity_list[i] = confusion_matrix_list[[i]][2,2]/sum(confusion_matrix_list[[i]][2,])
+}
+#calculating specificity:
+specificity_list = list()
+for (i in 1:length(cutoff_list)) {
+  specificity_list[i] = confusion_matrix_list[[i]][1,1]/sum(confusion_matrix_list[[i]][1,])
+}
+
+#putting calculated values in a data frame:
+seq_result = data.frame(cutoff = cutoff_list,
+                        accuracy = unlist(accuracy_list),
+                        sensitivity = unlist(sensitivity_list),
+                        specificity = unlist(specificity_list),
+                        misclass = glm_misclass_list)
+view(seq_result)
+seq_result[which(seq_result[,2]==max(seq_result[,2]),arr.ind = TRUE),]
+#changing data frame for plotting:
+seq_result_plot = rbind(data.frame(cutoff = cutoff_list,
+                                   index = unlist(accuracy_list),
+                                   type = "accuracy"),
+                        data.frame(cutoff = cutoff_list,
+                                   index = unlist(sensitivity_list),
+                                   type = "sensitivity"),
+                        data.frame(cutoff = cutoff_list,
+                                   index = unlist(specificity_list),
+                                   type = "specificity"),
+                        data.frame(cutoff = cutoff_list,
+                                   index = unlist(glm_misclass_list),
+                                   type = "misclass"))
+highlight = seq_result_plot %>% filter(cutoff %in% c("0.1",0.3,0.5,0.7,0.9))
+#plotting requested graph:
+seq_result_plot %>%
+  ggplot(aes(x = cutoff))+
+  geom_line(aes(y = index,color = type))+
+  geom_point(data = highlight,aes(x = cutoff,y = index), color = "brown", size = 1)+
+  theme_get()
+```
+
+LDA :
+
+```{r}
+#fitting lda models:
+lda_models = list(
+simple_lda_model = lda(satisfaction ~ . , data = airline_est),
+quad_lda_model = lda(as.formula(paste('satisfaction ~',paste('poly(',colnames(airline_est[-c(1,2,4,5,23)]),',2)',collapse = ' + '))),data = airline_est),
+interacted_lda_model = lda(as.formula(paste('satisfaction ~.^2+',paste('poly(',colnames(airline_est[-c(1,2,4,5,23)]),',2)',collapse = ' + '))),data = airline_est)
+)
+#predicting:
+lda_predict_list = lapply(lda_models, predict, airline_valid)
+#misclas calculation:
+#lda_predict_list[[1]][1]
+lda_misclass_list = list()
+for (i in 1:length(lda_models)) {
+  lda_misclass_list[i] = calc_misclass(airline_valid$satisfaction,lda_predict_list[[i]]$class)
+}
+lda_misclass_df = data.frame(model = c("simple_lda","quad_lda","interact_lda"),misclass=unlist(lda_misclass_list))
+view(lda_misclass_df)
+
+lda_final_model = lda(as.formula(paste('satisfaction ~.^2+',paste('poly(',colnames(airline_est[-c(1,2,4,5,23)]),',2)',collapse = ' + '))),data = airline_train)
+lda_final_pred = predict(lda_final_model,airline_test)
+lda_final_misclas = calc_misclass(actual = airline_test$satisfaction, predicted = lda_final_pred$class)
+lda_conf = table(actual=airline_test$satisfaction,
+      predicted=lda_final_pred$class)
+lda_sens = lda_conf[2,2]/sum(lda_conf[2,])
+lda_spec = lda_conf[1,1]/sum(lda_conf[1,])
+```
+
+QDA:
+
+```{r}
+qda_model_list = list(
+  simple_qda_model = qda(satisfaction ~ . , data = airline_est),
+  quad_qda_mdoel = qda(as.formula(paste('satisfaction ~',paste('poly(',colnames(airline_est[-c(1,2,4,5,23)]),',2)',collapse = ' + '))),data = airline_est)
+)
+#predicting:
+qda_predict_list = lapply(qda_model_list, predict, airline_valid)
+#misclas calculation:
+qda_misclass_list = list()
+for (i in 1:length(qda_model_list)) {
+  qda_misclass_list[i] = calc_misclass(airline_valid$satisfaction,qda_predict_list[[i]]$class)
+}
+qda_misclass_df = data.frame(model = c("simple_lda","quad_lda"),misclass=unlist(qda_misclass_list))
+
+final_qda_mdoel = qda(as.formula(paste('satisfaction ~',paste('poly(',colnames(airline_est[-c(1,2,4,5,23)]),',2)',collapse = ' + '))),data = airline_train)
+final_qda_pred = predict(final_qda_mdoel,airline_test)
+final_qda_misclas = calc_misclass(actual = airline_test$satisfaction, predicted = final_qda_pred$class)
+qda_conf = table(actual=airline_test$satisfaction,
+                 predicted=final_qda_pred$class)
+qda_sens = qda_conf[2,2]/sum(qda_conf[2,])
+qda_spec = qda_conf[1,1]/sum(qda_conf[1,])
+```
+
+Naive Bayes:
+
+```{r}
+nb_model = NaiveBayes(satisfaction ~ . , data = airline_train)
+predict_nb_model = predict(nb_model, airline_test)
+nb_misclas = calc_misclass(airline_test$satisfaction, predict_nb_model$class)
+nb_conf = table(actual = airline_test$satisfaction,
+                predicted = predict_nb_model$class)
+nb_sens = nb_conf[2,2]/sum(nb_conf[2,])
+nb_spec = nb_conf[1,1]/sum(nb_conf[1,])
+```
+
+Normalization data:
+
+```{r}
+#estimation data normalization:
+al_est_scaled = airline_est[,-c(1,2,4,5,23)]
+al_est_scale_center = data.frame(matrix(nrow = 2, ncol = length(colnames(al_est_scaled))),
+                                 row.names = c("center","scale"))
+colnames(al_est_scale_center) = colnames(al_est_scaled)
+for(i in 1:length(colnames(al_est_scaled))){
+  al_est_scaled[,i] = scale(al_est_scaled[,i])
+  al_est_scale_center[1,i]= attr(al_est_scaled[,i], "scaled:center")
+  al_est_scale_center[2,i]= attr(al_est_scaled[,i], "scaled:scale")
+}
+al_est_scaled = cbind(al_est_scaled,airline_est[,c(1,2,4,5,23)])
+#validation data normalization:
+al_val_scaled = airline_valid[,-c(1,2,4,5,23)]
+al_val_scale_center = data.frame(matrix(nrow = 2, ncol = length(colnames(al_val_scaled))),
+                                 row.names = c("center","scale"))
+colnames(al_val_scale_center) = colnames(al_val_scaled)
+for(i in 1:length(colnames(al_val_scaled))){
+  al_val_scaled[,i] = scale(al_val_scaled[,i], center = al_est_scale_center[1,i],scale = al_est_scale_center[2,i] )
+}
+al_val_scaled = cbind(al_val_scaled,airline_valid[,c(1,2,4,5,23)])
+#train data normalization:
+al_train_scaled = airline_train[,-c(1,2,4,5,23)]
+al_train_scale_center = data.frame(matrix(nrow = 2, ncol = length(colnames(al_train_scaled))),
+                                  row.names = c("center","scale"))
+colnames(al_train_scale_center) = colnames(al_train_scaled)
+for(i in 1:length(colnames(al_train_scaled))){
+  al_train_scaled[,i] = scale(al_train_scaled[,i])
+  al_train_scale_center[1,i]= attr(al_train_scaled[,i], "scaled:center")
+  al_train_scale_center[2,i]= attr(al_train_scaled[,i], "scaled:scale")
+}
+al_train_scaled = cbind(al_train_scaled,airline_train[,c(1,2,4,5,23)])
+
+
+#test data normalization:
+al_test_scaled = airline_test[,-c(1,2,4,5,23)]
+al_test_scale_center = data.frame(matrix(nrow = 2, ncol = length(colnames(al_test_scaled))),
+                                 row.names = c("center","scale"))
+colnames(al_test_scale_center) = colnames(al_test_scaled)
+for(i in 1:length(colnames(al_test_scaled))){
+  al_test_scaled[,i] = scale(al_test_scaled[,i],center = al_train_scale_center[1,i], scale =al_train_scale_center[2,i] )
+}
+al_test_scaled = cbind(al_test_scaled,airline_test[,c(1,2,4,5,23)])
+```
+
+KNN:
+
+```{r}
+#fitting a sequence of models
+names = c(paste("knn_model_norm_",seq(1,100,by=5),sep = ""))
+al_knn_model_norm_list = list()
+for (i in seq(1,100,by=5)) {
+  al_knn_model_norm_list[[i]] = knn3(satisfaction ~ . , data = al_est_scaled,k=i )
+}
+al_knn_model_norm_list = Filter(Negate(is.null),al_knn_model_norm_list)
+knn_norm_predict = lapply(al_knn_model_norm_list, predict,al_val_scaled,type = "class")
+knn_misclas_list = sapply(knn_norm_predict, calc_misclass, al_val_scaled$satisfaction)
+knn_misclas_df = data.frame(k = seq(1,100,by=5),misclass = knn_misclas_list)
+view(knn_misclas_df)
+knn_misclas_df %>%
+  ggplot(aes(x = k))+
+  geom_line(aes(y = misclass))+
+  geom_point(aes(y=misclass))
+#k=11
+
+final_knn_model = knn3(satisfaction ~ . , data = al_train_scaled,k=11)
+knn_final_pred = predict(final_knn_model,al_test_scaled,type = "class")
+final_knn_misclass = calc_misclass(actual = al_test_scaled$satisfaction,predicted = knn_final_pred)
+```
+
+Decision Tree:
+
+```{r}
+#fitting asequence of tree model:
+cps = seq(0.001,1,by=0.005)
+tree_models_list = list()
+for (i in 1:length(cps)) {
+  tree_models_list[[i]] = rpart(satisfaction ~ . , data = airline_est, cp = cps[i],minsplit = 20)
+}
+tree_predict_list = lapply(tree_models_list, predict,airline_valid,type = "class")
+tree_misclas_list = sapply(tree_predict_list, calc_misclass, airline_valid$satisfaction)
+tree_result_df = data.frame(misclass = tree_misclas_list, cp = cps, minsplit = 20)
+view(tree_result_df)
+#best = cp = 0.001 , minsplit = 5
+
+
+
+
+tree_result_df %>%
+  ggplot(aes(x = cp))+
+  geom_line(y = tree_result_df$misclass)
+
+#fitting on all the data:
+final_tree_model = rpart(satisfaction ~ . , data = airline_train, cp = 0.001 ,minsplit = 20)
+final_tree_pred = predict(final_tree_model,airline_test,type = "class")
+final_tree_misclass = calc_misclass(actual = airline_test$satisfaction,predicted = final_tree_pred)
+
+```
